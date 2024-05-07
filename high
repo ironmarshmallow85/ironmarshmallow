@@ -1,0 +1,411 @@
+#/bin/bash
+
+OS=$(cat /etc/os-release | grep -w "=" ID | cut -d "=" -f2)
+
+echo "****************************V-230235*******************************"
+# Check if the system uses UEFI
+if [ ! -d "/sys/firmware/efi" ]; then
+    echo "UEFI system not detected."
+    # Check if an encrypted grub superusers password is set
+    grub_password=$(sudo grep -iw grub2_password /boot/grub2/*.cfg | cut -d= -f2)
+    if [[ -z "$grub_password" ]]; then
+        echo "No encrypted grub superusers password set."
+        echo "Generating encrypted grub2 password..."
+        sudo grub2-setpassword
+    fi
+
+    if [[ ! "$grub_password" =~ ^grub.pbkdf2.sha512 ]]; then
+        echo "The grub superusers password does not begin with 'grub.pbkdf2.sha512'. This is a finding."
+        echo "Generating encrypted grub2 password..."
+        sudo grub2-setpassword
+    fi
+    echo "Encrypted grub superusers password is set correctly."
+fi
+
+echo "****************************V-230234*******************************"
+# Check if the system is using UEFI
+if [[ -d "/boot/efi/EFI/${os}" ]]; then
+    # Check if an encrypted grub superuser's password is set
+    if sudo grep -q -iw "GRUB2_PASSWORD" /boot/efi/EFI/${OS}/user.cfg; then
+        password_line=$(sudo grep -iw "GRUB2_PASSWORD" /boot/efi/EFI/${OS}/user.cfg)
+        password_hash=$(echo "$password_line" | cut -d '=' -f 2)
+        if [[ $password_hash != "grub.pbkdf2.sha512"* ]]; then
+            echo "WARNING: The grub superuser's password does not begin with 'grub.pbkdf2.sha512'."
+            echo "Please set an encrypted grub bootloader password using 'sudo grub2-setpassword'."
+        fi
+    else
+        echo "WARNING: Encrypted grub superuser's password not found in /boot/efi/EFI/${OS}/user.cfg."
+        echo "Please set an encrypted grub bootloader password using 'sudo grub2-setpassword'."
+    fi
+
+    # Configure the system to require a grub bootloader password
+    echo "Configuring the system to require a grub bootloader password..."
+    sudo grub2-setpassword
+    echo "Grub bootloader password set successfully."
+else
+    echo "WARNING: This system does not use UEFI. This check is not applicable."
+fi
+
+echo "****************************V-244540*******************************"
+# Check if the "nullok" option is present in /etc/pam.d/system-auth
+if sudo grep -q -i "nullok" /etc/pam.d/system-auth; then
+    echo "WARNING: The 'nullok' option is present in /etc/pam.d/system-auth."
+    echo "Removing the 'nullok' option to prevent logons with empty passwords..."
+    sudo sed -i 's/nullok//g' /etc/pam.d/system-auth
+    echo "The 'nullok' option has been removed from /etc/pam.d/system-auth."
+else
+    echo "No 'nullok' option found in /etc/pam.d/system-auth. System is already hardened against null passwords."
+fi
+
+
+echo "****************************V-244541*******************************"
+# Check if the "nullok" option is present in /etc/pam.d/password-auth
+if sudo grep -q -i "nullok" /etc/pam.d/password-auth; then
+    echo "WARNING: The 'nullok' option is present in /etc/pam.d/password-auth."
+    echo "Removing the 'nullok' option to prevent logons with empty passwords..."
+    sudo sed -i 's/nullok//g' /etc/pam.d/password-auth
+    echo "The 'nullok' option has been removed from /etc/pam.d/password-auth."
+else
+    echo "No 'nullok' option found in /etc/pam.d/password-auth. System is already hardened against null passwords."
+fi
+
+
+echo "****************************V-230380*******************************"
+# Check if the "PermitEmptyPasswords" option is set to "yes" in sshd_config
+if sudo grep -q "PermitEmptyPasswords yes" /etc/ssh/sshd_config*; then
+    echo "WARNING: The 'PermitEmptyPasswords' option is set to 'yes' in sshd_config."
+    echo "Updating the sshd_config file to prevent logons with empty passwords..."
+    sudo sed -i 's/PermitEmptyPasswords yes/PermitEmptyPasswords no/g' /etc/ssh/sshd_config*
+    echo "The 'PermitEmptyPasswords' option has been set to 'no' in sshd_config."
+    # Restart SSH daemon
+    echo "Restarting the SSH daemon for changes to take effect..."
+    sudo systemctl restart sshd.service
+    echo "SSH daemon restarted successfully."
+else
+    echo "No 'PermitEmptyPasswords yes' entry found in sshd_config. System is already hardened against empty passwords."
+fi
+
+
+echo "****************************V-230329*******************************"
+# Check if the system has a graphical user interface installed
+if [[ -f "/etc/gdm/custom.conf" ]]; then
+    # Check the value of AutomaticLoginEnable in custom.conf
+    if sudo grep -q -i "AutomaticLoginEnable" /etc/gdm/custom.conf; then
+        auto_login_value=$(sudo grep -i "AutomaticLoginEnable" /etc/gdm/custom.conf | awk -F= '{print $2}' | tr -d '[:space:]')
+        if [[ "$auto_login_value" != "false" ]]; then
+            echo "WARNING: AutomaticLoginEnable is not set to 'false' in /etc/gdm/custom.conf."
+            echo "Configuring the system to not allow unattended or automatic logon via the graphical user interface..."
+            sudo sed -i '/\[daemon\]/a AutomaticLoginEnable=false' /etc/gdm/custom.conf
+            echo "AutomaticLoginEnable set to 'false' in /etc/gdm/custom.conf."
+        else
+            echo "AutomaticLoginEnable is already set to 'false' in /etc/gdm/custom.conf. System is hardened against automatic logon."
+        fi
+    else
+        echo "WARNING: AutomaticLoginEnable parameter not found in /etc/gdm/custom.conf."
+        echo "Adding AutomaticLoginEnable=false to /etc/gdm/custom.conf to prevent automatic logon."
+        echo "[daemon]" | sudo tee -a /etc/gdm/custom.conf
+        echo "AutomaticLoginEnable=false" | sudo tee -a /etc/gdm/custom.conf
+        echo "AutomaticLoginEnable set to 'false' in /etc/gdm/custom.conf."
+    fi
+else
+    echo "WARNING: This system does not have a graphical user interface installed. This requirement is Not Applicable."
+fi
+
+
+echo "****************************V-230558*******************************"
+# Check if vsftpd is installed
+if sudo yum list installed "*ftpd*" | grep -q "vsftpd"; then
+    echo "WARNING: vsftpd FTP server is installed on the system."
+    echo "Please document vsftpd with ISSO or remove it from the system."
+    read -r -p "Do you want to remove vsftpd from the system? [y/N] " response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        sudo yum remove vsftpd
+        echo "vsftpd FTP server has been removed from the system."
+    else
+        echo "No action taken. Please document vsftpd with ISSO as an operational requirement."
+    fi
+else
+    echo "No FTP server (vsftpd) is installed on the system."
+fi
+
+
+echo "****************************V-230529*******************************"
+# Check the status of ctrl-alt-del.target
+ctrl_alt_del_status=$(sudo systemctl status ctrl-alt-del.target)
+
+# Check if ctrl-alt-del.target is loaded and not masked
+if echo "$ctrl_alt_del_status" | grep -q "Loaded:.*active.*"; then
+    echo "WARNING: ctrl-alt-del.target is loaded and not masked."
+
+    # Disable and mask ctrl-alt-del.target
+    echo "Disabling and masking ctrl-alt-del.target..."
+    sudo systemctl disable ctrl-alt-del.target
+    sudo systemctl mask ctrl-alt-del.target
+    echo "ctrl-alt-del.target has been disabled and masked."
+
+    # Reload the systemd daemon for the changes to take effect
+    echo "Reloading the systemd daemon for changes to take effect..."
+    sudo systemctl daemon-reload
+    echo "Systemd daemon reloaded successfully."
+else
+    echo "ctrl-alt-del.target is not loaded or is already masked. System is already hardened."
+fi
+
+
+echo "****************************V-251706*******************************"
+
+# Check for accounts with blank passwords in /etc/shadow
+blank_passwords=$(sudo awk -F: '!$2 {print $1}' /etc/shadow)
+
+# Check if there are any accounts with blank passwords
+if [[ -n "$blank_passwords" ]]; then
+    echo "WARNING: The following accounts have blank passwords:"
+    echo "$blank_passwords"
+    # Loop through each account with a blank password and set a password or lock the account
+    for user in $blank_passwords; do
+        echo "Locking user: $user"
+        sudo passwd -l "$user"
+    done
+    echo "All accounts with blank passwords have been Locked."
+else
+    echo "No accounts with blank passwords found. System is already hardened."
+fi
+
+
+echo "****************************V-230284*******************************"
+# Find .shosts files and check if any are found
+shosts_files=$(sudo find / -name '*.shosts')
+
+if [[ -n "$shosts_files" ]]; then
+    echo "WARNING: The following .shosts files were found:"
+    echo "$shosts_files"
+    rm -rf $shosts_files
+    echo "$shosts_files files removed."
+else
+    echo "No .shosts files found. System is hardened against .shosts usage."
+fi
+
+echo "****************************V-230283*******************************"
+# Find shosts.equiv files and check if any are found
+shosts_equiv_files=$(sudo find / -name shosts.equiv)
+
+if [[ -n "$shosts_equiv_files" ]]; then
+    echo "WARNING: The following shosts.equiv files were found:"
+    echo "$shosts_equiv_files"
+    
+    # Remove shosts.equiv files
+    echo "Removing shosts.equiv files from the system..."
+    sudo rm -f $shosts_equiv_files
+    echo "shosts.equiv files have been removed."
+else
+    echo "No shosts.equiv files found. System is hardened against shosts.equiv usage."
+fi
+
+
+echo "****************************V-230487*******************************"
+# Check if telnet-server package is installed
+if sudo yum list installed telnet-server &>/dev/null; then
+    echo "WARNING: The telnet-server package is installed."
+
+    # Remove telnet-server package
+    echo "Removing telnet-server package from the system..."
+    sudo yum remove -y telnet-server
+    echo "telnet-server package has been removed."
+else
+    echo "telnet-server package is not installed. System is already hardened."
+fi
+
+echo "****************************V-230264*******************************"
+# Define the path to the YUM repository configuration files
+yum_repo_path="/etc/yum.repos.d"
+
+# Check if gpgcheck is set to 1 in all YUM repository configuration files
+for repo_file in "$yum_repo_path"/*.repo; do
+    if grep -q "^gpgcheck=1" "$repo_file"; then
+        echo "gpgcheck is already set to 1 in $repo_file"
+    else
+        echo "gpgcheck is not set to 1 in $repo_file. Updating the configuration..."
+        sudo sed -i '/^\[.*\]/,/^\[/ s/^gpgcheck=.*/gpgcheck=1/' "$repo_file"
+        echo "gpgcheck is set to 1 in $repo_file"
+    fi
+done
+
+
+echo "****************************V-230265*******************************"
+# Define the path to the DNF configuration file
+dnf_conf="/etc/dnf/dnf.conf"
+
+# Check if localpkg_gpgcheck is set correctly in the DNF configuration file
+if grep -Eq '^\s*localpkg_gpgcheck\s*=\s*(1|True|yes)' "$dnf_conf"; then
+    echo "localpkg_gpgcheck is correctly set in $dnf_conf"
+else
+    echo "localpkg_gpgcheck is not set correctly in $dnf_conf. Updating the configuration..."
+    # Update the localpkg_gpgcheck option in the DNF configuration file
+    sudo sed -i 's/^\s*localpkg_gpgcheck\s*=\s*.*/localpkg_gpgcheck=True/' "$dnf_conf"
+    echo "localpkg_gpgcheck is set to True in $dnf_conf"
+fi
+
+echo "****************************V-230223*******************************"
+# Check if FIPS mode is enabled
+fips_status=$(fips-mode-setup --check)
+
+if echo "$fips_status" | grep -q "FIPS mode is enabled"; then
+    echo "FIPS mode is enabled."
+    fips_kernel_param=$(sudo grub2-editenv list | grep -i 'fips')
+    if [[ -n "$fips_kernel_param" ]]; then
+        echo "Kernel boot parameter is configured for FIPS mode."
+        # Check if the system is in FIPS mode
+        fips_sys_enabled=$(sudo cat /proc/sys/crypto/fips_enabled)
+
+        if [[ "$fips_sys_enabled" -eq 1 ]]; then
+            echo "System is in FIPS mode (fips_enabled=1)."
+        else
+            echo "System is not in FIPS mode (fips_enabled=$fips_sys_enabled)."
+        fi
+    else
+        echo "Kernel boot parameter is not configured for FIPS mode."
+    fi
+else
+    echo "FIPS mode is not enabled or the system is not in FIPS mode."
+fi
+echo "The system is configured with DOD-approved encryption in FIPS mode."
+
+
+echo "****************************V-230221*******************************"
+# Get the version of the operating system
+os_version=$(sudo cat /etc/redhat-release)
+
+supported_versions=(
+    "Red Hat Enterprise Linux Server release 8.1 (Ootpa): 30 November 2021"
+    "Red Hat Enterprise Linux Server release 8.2 (Ootpa): 30 April 2022"
+    "Red Hat Enterprise Linux Server release 8.4 (Ootpa): 31 May 2023"
+    "Red Hat Enterprise Linux Server release 8.5 (Ootpa): 31 May 2022"
+    "Red Hat Enterprise Linux Server release 8.6 (Ootpa): 31 May 2024"
+    "Red Hat Enterprise Linux Server release 8.7 (Ootpa): 31 May 2023"
+    "Red Hat Enterprise Linux Server release 8.8 (Ootpa): 31 May 2025"
+    "Red Hat Enterprise Linux Server release 8.9 (Ootpa): 31 May 2024"
+    "Red Hat Enterprise Linux Server release 8.10 (Ootpa): 31 May 2029"
+)
+
+# Check if the current OS version is in the list of supported versions
+supported=false
+for version_info in "${supported_versions[@]}"; do
+    if [[ "$os_version" == *"$version_info"* ]]; then
+        supported=true
+        break
+    fi
+done
+
+# Display the result
+if [ "$supported" = true ]; then
+    echo "The operating system version $os_version is vendor-supported."
+else
+    echo "WARNING: The operating system version $os_version is not vendor-supported."
+
+    read -r -p "Please upgrade os version to supported version, Please acknowledge [y/N] " response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo "supported verrsions:-"
+        echo "${supported_versions[@]}"
+        echo "Please manually upgrade os version to supported version"
+    else
+        echo "You did not acknowledged to manually upgrade os version to supported version, This step will be considered as non-hardened"
+    fi
+fi
+
+
+echo "****************************V-230534*******************************"
+# Check for accounts with UID 0 other than root
+accounts_with_uid_0=$(sudo awk -F: '$3 == 0 && $1 != "root" {print $1}' /etc/passwd)
+
+if [[ -n "$accounts_with_uid_0" ]]; then
+    echo "WARNING: The following accounts have a UID of 0:"
+    echo "$accounts_with_uid_0"
+
+    # Loop through each account and adjust the UID
+    while read -r account; do
+        if id -u "$account" &>/dev/null; then
+            echo "Adjusting UID for account $account..."
+
+            # Check if the account is associated with system commands or applications
+            if grep -q "^$account:" /etc/passwd; then
+                # Change UID to one greater than 0 but less than 1000
+                sudo usermod -u 1001 "$account"
+                echo "UID for $account has been changed to 1001."
+            else
+                # Change UID to a value greater than 1000 that is not already assigned
+                new_uid=1001
+                while id "$new_uid" &>/dev/null; do
+                    ((new_uid++))
+                done
+                sudo usermod -u "$new_uid" "$account"
+                echo "UID for $account has been changed to $new_uid."
+            fi
+        else
+            echo "Account $account does not exist."
+        fi
+    done <<<"$accounts_with_uid_0"
+else
+    echo "No accounts other than root have a UID of 0. System is hardened."
+fi
+
+
+echo "****************************V-230533*******************************"
+# Check if TFTP server package is installed
+if sudo yum list installed tftp-server &>/dev/null; then
+    echo "WARNING: The TFTP server package is installed."
+
+    # Remove TFTP server package
+    echo "Removing TFTP server package from the system..."
+    sudo yum remove -y tftp-server
+    echo "TFTP server package has been removed."
+else
+    echo "TFTP server package is not installed. System is already hardened."
+fi
+
+echo "****************************V-230530*******************************"
+# Check if the logout key is configured in dconf
+if sudo grep -q "logout" /etc/dconf/db/local.d/*; then
+    echo "WARNING: The 'logout' key is configured in dconf."
+
+    # Disable Ctrl-Alt-Delete sequence for graphical user interface
+    echo "Disabling Ctrl-Alt-Delete sequence for graphical user interface..."
+
+    # Create or edit the configuration file to disable Ctrl-Alt-Delete
+    sudo tee /etc/dconf/db/local.d/00-disable-CAD <<EOF
+[org/gnome/settings-daemon/plugins/media-keys]
+logout=''
+EOF
+
+    sudo dconf update
+    echo "Ctrl-Alt-Delete sequence has been disabled for graphical user interface."
+else
+    echo "Ctrl-Alt-Delete sequence is not configured. System is already hardened."
+fi
+
+echo "****************************V-230531*******************************"
+# Check if Ctrl-Alt-Delete burst action is configured in systemd
+if sudo grep -q "CtrlAltDelBurstAction" /etc/systemd/system.conf; then
+    echo "WARNING: CtrlAltDelBurstAction is configured in systemd."
+    # Disable Ctrl-Alt-Delete burst action
+    echo "Disabling Ctrl-Alt-Delete burst action..."
+    sudo sed -i '/CtrlAltDelBurstAction/c\CtrlAltDelBurstAction=none' /etc/systemd/system.conf
+    # Reload the systemd daemon for the changes to take effect
+    sudo systemctl daemon-reload
+    echo "Ctrl-Alt-Delete burst action has been disabled."
+else
+    echo "Ctrl-Alt-Delete burst action is not configured. System is already hardened."
+fi
+
+echo "****************************V-230492*******************************"  
+# Check if rsh-server package is installed
+if sudo yum list installed rsh-server &>/dev/null; then
+    echo "WARNING: The rsh-server package is installed."
+
+    # Remove rsh-server package
+    echo "Removing rsh-server package from the system..."
+    sudo yum remove -y rsh-server
+    echo "rsh-server package has been removed."
+else
+    echo "rsh-server package is not installed. System is already hardened."
+fi
+
