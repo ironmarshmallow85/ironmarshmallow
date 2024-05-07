@@ -1,0 +1,535 @@
+#!/bin/bash
+
+echo "****************************V-230241*******************************"
+if ! sudo yum list installed policycoreutils &>/dev/null; then
+    echo "WARNING: The policycoreutils package is not installed."
+    # Install policycoreutils package
+    echo "Installing policycoreutils package..."
+    sudo yum install -y policycoreutils
+    echo "policycoreutils package has been installed."
+else
+    echo "policycoreutils package is already installed. System is already hardened."
+fi
+
+
+echo "****************************V-230381*******************************"
+if ! sudo grep -q "pam_lastlog.so showfailed" /etc/pam.d/postlogin; then
+    echo "WARNING: pam_lastlog configuration is missing or silent in /etc/pam.d/postlogin."
+
+    # Add configuration for pam_lastlog if missing or silent
+    echo "Configuring pam_lastlog to provide user feedback..."
+    sudo sed -i '1i session required pam_lastlog.so showfailed' /etc/pam.d/postlogin
+    echo "pam_lastlog configuration added to /etc/pam.d/postlogin."
+else
+    echo "pam_lastlog configuration is already set to provide user feedback. System is already hardened."
+fi
+
+
+
+echo "****************************V-230468*******************************"
+# Check if "audit" entry is set to "1" in grub2 environment
+if ! sudo grub2-editenv list | grep -q "audit=1"; then
+    echo "WARNING: audit entry is missing, not set to 1, or commented out in grub2 environment."
+
+    # Update kernel parameters to enable auditing
+    echo "Enabling auditing of processes prior to audit daemon..."
+    sudo grubby --update-kernel=ALL --args="audit=1"
+    echo "Audit enabled in kernel parameters."
+else
+    echo "Audit is already enabled in kernel parameters."
+fi
+
+# Check if "audit" is set to "1" in /etc/default/grub
+if ! sudo grep -q "audit=1" /etc/default/grub; then
+    echo "WARNING: audit entry is missing, not set to 1, or commented out in /etc/default/grub."
+
+    # Add or modify audit entry in /etc/default/grub
+    echo "Configuring auditing to persist in kernel updates..."
+    sudo sed -i '/GRUB_CMDLINE_LINUX/c\GRUB_CMDLINE_LINUX="audit=1"' /etc/default/grub
+    echo "Audit configured to persist in /etc/default/grub."
+    
+    # Update grub configuration
+    sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+    echo "Grub configuration updated."
+else
+    echo "Audit is already configured to persist in /etc/default/grub."
+fi
+
+
+echo "****************************V-230469*******************************"
+# Check if "audit_backlog_limit" entry is set to "8192" or greater in grub2 environment
+if ! sudo grub2-editenv list | grep -q "audit_backlog_limit=8192"; then
+    echo "WARNING: audit_backlog_limit entry is missing, not set to 8192 or greater, or commented out in grub2 environment."
+
+    # Update kernel parameters to set audit_backlog_limit
+    echo "Setting audit_backlog_limit to 8192 in kernel parameters..."
+    sudo grubby --update-kernel=ALL --args="audit_backlog_limit=8192"
+    echo "audit_backlog_limit set to 8192 in kernel parameters."
+else
+    echo "audit_backlog_limit is already set to 8192 in kernel parameters."
+fi
+
+# Check if "audit_backlog_limit" is set to "8192" or greater in /etc/default/grub
+if ! sudo grep -q "audit_backlog_limit=8192" /etc/default/grub; then
+    echo "WARNING: audit_backlog_limit entry is missing, not set to 8192 or greater, or commented out in /etc/default/grub."
+
+    # Add or modify audit_backlog_limit entry in /etc/default/grub
+    echo "Configuring audit_backlog_limit to persist in kernel updates..."
+    sudo sed -i '/GRUB_CMDLINE_LINUX/c\GRUB_CMDLINE_LINUX="audit_backlog_limit=8192"' /etc/default/grub
+    echo "audit_backlog_limit configured to persist in /etc/default/grub."
+    
+    # Update grub configuration
+    sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+    echo "Grub configuration updated."
+else
+    echo "audit_backlog_limit is already configured to persist in /etc/default/grub."
+fi
+
+
+
+echo "****************************V-230551*******************************"
+# Check if AIDE is installed
+if ! command -v aide &>/dev/null; then
+    echo "AIDE is not installed. Please install AIDE or configure another file integrity tool."
+    exit 1
+fi
+
+# Check if aide.conf exists
+aide_conf="/etc/aide.conf"
+if [ ! -f "$aide_conf" ]; then
+    echo "AIDE configuration file '$aide_conf' not found."
+    exit 1
+fi
+
+# Check if xattrs rule is present in aide.conf
+if ! grep -E '^[^#]*xattrs' "$aide_conf" >/dev/null; then
+    echo "xattrs rule is missing in '$aide_conf'. Adding xattrs rule to all uncommented selection lines..."
+    # Add xattrs rule to all uncommented selection lines
+    sed -i '/^[^#]/ s/$/ xattrs/' "$aide_conf"
+    echo "xattrs rule added to all uncommented selection lines in '$aide_conf'."
+else
+    echo "xattrs rule is already present in '$aide_conf'."
+fi
+
+echo "Checking file and directory extended attributes is configured in AIDE."
+
+
+
+
+echo "****************************V-230552*******************************"
+# Check if AIDE is installed
+if ! command -v aide &>/dev/null; then
+    echo "AIDE is not installed. Please install AIDE or configure another file integrity tool."
+    exit 1
+fi
+
+# Check if aide.conf exists
+aide_conf="/etc/aide.conf"
+if [ ! -f "$aide_conf" ]; then
+    echo "AIDE configuration file '$aide_conf' not found."
+    exit 1
+fi
+
+# Check if acl rule is present in aide.conf
+if ! grep -E '^[^#]*acl' "$aide_conf" >/dev/null; then
+    echo "acl rule is missing in '$aide_conf'. Adding acl rule to all selection lines..."
+    # Add acl rule to all selection lines
+    sed -i '/^[^#]/ s/$/ acl/' "$aide_conf"
+    echo "acl rule added to all selection lines in '$aide_conf'."
+else
+    echo "acl rule is already present in '$aide_conf'."
+fi
+
+echo "Checking file and directory ACLs is configured in AIDE."
+
+
+
+echo "****************************V-230253*******************************"
+# Check if the operating system is RHEL versions 8.0 or 8.1
+rhel_version=$(awk -F'.' '{print $1}' /etc/redhat-release | awk '{print $NF}')
+if [[ "$rhel_version" == "8" && "$(awk -F'.' '{print $2}' /etc/redhat-release)" =~ ^(0|1)$ ]]; then
+    echo "RHEL versions 8.0 or 8.1, this requirement is not applicable."
+    exit 0
+fi
+
+# Check if SSH_USE_STRONG_RNG is set to 32 in /etc/sysconfig/sshd
+sshd_config="/etc/sysconfig/sshd"
+if ! grep -E '^SSH_USE_STRONG_RNG=32' "$sshd_config" >/dev/null; then
+    echo "SSH_USE_STRONG_RNG=32 is not set in '$sshd_config'."
+    echo "Configuring the operating system SSH server to use strong entropy..."
+    echo "SSH_USE_STRONG_RNG=32" >> "$sshd_config"
+    echo "Restarting SSH service for changes to take effect..."
+    systemctl restart sshd
+    echo "SSH server configured to use strong entropy."
+else
+    echo "SSH_USE_STRONG_RNG=32 is already set in '$sshd_config'."
+fi
+
+
+echo "****************************V-230285*******************************"
+# Check if the system is RHEL version 8.4 or above
+rhel_version=$(awk -F'.' '{print $1}' /etc/redhat-release | awk '{print $NF}')
+if [[ "$rhel_version" -ge 4 ]]; then
+    echo "RHEL version 8.4 or above with kernel FIPS mode enabled, this requirement is Not Applicable."
+    exit 0
+fi
+
+# Check if the rngd service is enabled and active
+if systemctl is-enabled rngd >/dev/null && systemctl is-active rngd >/dev/null; then
+    echo "rngd service is already enabled and active."
+else
+    echo "rngd service is not enabled and active."
+    echo "Starting and enabling the rngd service..."
+    sudo systemctl start rngd.service
+    sudo systemctl enable rngd.service
+    echo "rngd service is now enabled and active."
+fi
+
+
+echo "****************************V-V-230281*******************************"
+#!/bin/bash
+
+# Check if clean_requirements_on_remove is configured in /etc/dnf/dnf.conf
+if grep -qiE '^clean_requirements_on_remove\s*=\s*(1|true|yes)$' /etc/dnf/dnf.conf; then
+    echo "clean_requirements_on_remove is configured correctly in /etc/dnf/dnf.conf."
+else
+    echo "clean_requirements_on_remove is not configured correctly in /etc/dnf/dnf.conf."
+    echo "Configuring clean_requirements_on_remove option..."
+    echo "clean_requirements_on_remove=True" | sudo tee -a /etc/dnf/dnf.conf >/dev/null
+    echo "Configured clean_requirements_on_remove option in /etc/dnf/dnf.conf."
+fi
+
+echo "****************************V-230470*******************************"
+# Check if USBGuard daemon is installed and enabled
+if ! rpm -q usbguard &>/dev/null || ! systemctl is-enabled usbguard &>/dev/null; then
+    echo "USBGuard daemon is either not installed or not enabled. Skipping audit logging configuration."
+    exit 1
+fi
+
+# Check if AuditBackend is configured in /etc/usbguard/usbguard-daemon.conf
+if grep -qiE '^AuditBackend\s*=\s*LinuxAudit' /etc/usbguard/usbguard-daemon.conf; then
+    echo "AuditBackend is configured correctly in /etc/usbguard/usbguard-daemon.conf."
+else
+    echo "AuditBackend is not configured correctly in /etc/usbguard/usbguard-daemon.conf."
+    echo "Configuring AuditBackend option..."
+    echo "AuditBackend=LinuxAudit" | sudo tee -a /etc/usbguard/usbguard-daemon.conf >/dev/null
+    echo "Configured AuditBackend option in /etc/usbguard/usbguard-daemon.conf."
+fi
+
+
+echo "****************************V-230350*******************************"
+# Check if tmux is listed in /etc/shells
+if grep -qi 'tmux' /etc/shells; then
+    echo "tmux is listed in /etc/shells."
+    echo "Removing tmux from /etc/shells to prevent disabling."
+    sudo sed -i '/tmux/d' /etc/shells
+    echo "tmux removed from /etc/shells."
+else
+    echo "tmux is not listed in /etc/shells. No action needed."
+fi
+
+
+echo "****************************V-244527*******************************"
+# Check if rng-tools package is installed
+if rpm -q rng-tools &>/dev/null; then
+    echo "rng-tools package is installed."
+else
+    echo "rng-tools package is not installed. Installing now..."
+    sudo yum install -y rng-tools
+    echo "rng-tools package installed successfully."
+fi
+
+echo "****************************V-230486*******************************"
+# Check if cmdport is set to 0 in chrony.conf
+if grep -wq 'cmdport 0' /etc/chrony.conf; then
+    echo "cmdport is set to 0 in /etc/chrony.conf"
+else
+    echo "cmdport is not set to 0 in /etc/chrony.conf. Fixing..."
+    sudo sed -i '/^cmdport/c\cmdport 0' /etc/chrony.conf
+    echo "cmdport set to 0 in /etc/chrony.conf"
+fi
+
+echo "****************************V-230485*******************************"
+# Check if port is set to 0 in chrony.conf
+if grep -wq 'port 0' /etc/chrony.conf; then
+    echo "port is set to 0 in /etc/chrony.conf"
+else
+    echo "port is not set to 0 in /etc/chrony.conf. Fixing..."
+    sudo sed -i '/^port/c\port 0' /etc/chrony.conf
+    echo "port set to 0 in /etc/chrony.conf"
+fi
+
+
+echo "****************************V-230294*******************************"
+# Check if /var/log/audit is mounted separately in /etc/fstab
+if grep -q '/var/log/audit' /etc/fstab; then
+    echo "/var/log/audit is mounted separately in /etc/fstab"
+else
+    echo "/var/log/audit is not mounted separately in /etc/fstab. This is a finding."
+fi
+
+
+echo "****************************V-230293*******************************"
+# Check if /var/log is mounted separately in /etc/fstab
+if grep -q '/var/log' /etc/fstab; then
+    echo "/var/log is mounted separately in /etc/fstab"
+else
+    echo "/var/log is not mounted separately in /etc/fstab. Manually Migrate the "/var/log" path onto a separate file system.."
+fi
+
+
+echo "****************************V-230292*******************************"
+# Check if /var is mounted separately in /etc/fstab
+if grep -q '/var ' /etc/fstab; then
+    echo "/var is mounted separately in /etc/fstab"
+else
+    echo "/var is not mounted separately in /etc/fstab. This is a finding."
+fi
+
+
+echo "****************************V-230269*******************************"
+# Check the status of kernel.dmesg_restrict
+dmesg_restrict_status=$(sudo sysctl -n kernel.dmesg_restrict)
+
+if [[ "$dmesg_restrict_status" -eq 1 ]]; then
+    echo "kernel.dmesg_restrict is already set to 1."
+else
+    echo "kernel.dmesg_restrict is not set to 1 or is missing. This is a finding."
+fi
+
+# Check for conflicting configurations
+conflicting_configs=$(grep -r 'kernel.dmesg_restrict' /run/sysctl.d/*.conf \
+    /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf \
+    /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf \
+    2>/dev/null | grep -v 'kernel.dmesg_restrict = 1')
+
+if [[ -n "$conflicting_configs" ]]; then
+    echo "Conflicting configurations found:"
+    echo "$conflicting_configs"
+    echo "Please remove conflicting configurations."
+fi
+
+
+echo "****************************V-230346*******************************"
+# Check for maxlogins setting in limits.conf and limits.d files
+maxlogins_setting=$(sudo grep -r -s '^[^#].*maxlogins' /etc/security/limits.conf /etc/security/limits.d/*.conf)
+
+if [[ -z "$maxlogins_setting" ]]; then
+    echo "maxlogins setting is missing or commented out. This is a finding."
+elif [[ "$maxlogins_setting" =~ .*maxlogins\ ([0-9]+).* ]]; then
+    maxlogins_value="${BASH_REMATCH[1]}"
+    if [[ "$maxlogins_value" -le 10 ]]; then
+        echo "maxlogins is set to $maxlogins_value, which is compliant."
+    else
+        echo "maxlogins is set to $maxlogins_value, which is greater than 10. This is a finding."
+    fi
+else
+    echo "Error: Unable to parse maxlogins setting."
+fi
+
+
+echo "****************************V-230395*******************************"
+# Check the log_format setting in auditd.conf
+log_format=$(sudo grep "log_format" /etc/audit/auditd.conf)
+
+if [[ -z "$log_format" ]]; then
+    echo "log_format option is missing or commented out. This is a finding."
+elif [[ "$log_format" =~ log_format\ =\ ([A-Z]+) ]]; then
+    format_value="${BASH_REMATCH[1]}"
+    if [[ "$format_value" == "ENRICHED" ]]; then
+        echo "log_format is set to ENRICHED, which is compliant."
+    else
+        echo "log_format is set to $format_value, which is not ENRICHED. This is a finding."
+    fi
+else
+    echo "Error: Unable to parse log_format setting."
+fi
+
+
+echo "****************************V-230499*******************************"
+# Verify if firewire-core is disabled with /bin/false
+firewire_disabled=$(sudo grep -r firewire-core /etc/modprobe.d/* | grep "/bin/false")
+
+if [[ -z "$firewire_disabled" ]]; then
+    echo "Firewire-core is not disabled with /bin/false. This is a finding."
+else
+    echo "Firewire-core is disabled with /bin/false, which is compliant."
+fi
+
+# Verify if firewire-core is blacklisted
+firewire_blacklisted=$(sudo grep -r firewire-core /etc/modprobe.d/* | grep "blacklist")
+
+if [[ -z "$firewire_blacklisted" || "$firewire_blacklisted" != *"blacklist firewire-core"* ]]; then
+    echo "Firewire-core is not blacklisted. This is a finding."
+else
+    echo "Firewire-core is blacklisted, which is compliant."
+fi
+
+
+echo "****************************V-230498*******************************"
+# Verify if cramfs is disabled with /bin/false
+cramfs_disabled=$(sudo grep -r cramfs /etc/modprobe.d/* | grep "/bin/false")
+
+if [[ -z "$cramfs_disabled" ]]; then
+    echo "Cramfs is not disabled with /bin/false. This is a finding."
+else
+    echo "Cramfs is disabled with /bin/false, which is compliant."
+fi
+
+# Verify if cramfs is blacklisted
+cramfs_blacklisted=$(sudo grep -r cramfs /etc/modprobe.d/* | grep "blacklist")
+
+if [[ -z "$cramfs_blacklisted" || "$cramfs_blacklisted" != *"blacklist cramfs"* ]]; then
+    echo "Cramfs is not blacklisted. This is a finding."
+else
+    echo "Cramfs is blacklisted, which is compliant."
+fi
+
+
+echo "****************************V-230495*******************************"      
+# Verify if CAN protocol is disabled with /bin/false
+can_disabled=$(sudo grep -r can /etc/modprobe.d/* | grep "/bin/false")
+
+if [[ -z "$can_disabled" ]]; then
+    echo "CAN protocol is not disabled with /bin/false. This is a finding."
+    sudo bash -c 'echo "install can /bin/false" > /etc/modprobe.d/blacklist.conf'
+else
+    echo "CAN protocol is disabled with /bin/false, which is compliant."
+fi
+
+# Verify if CAN protocol is blacklisted
+can_blacklisted=$(sudo grep -r can /etc/modprobe.d/* | grep "blacklist")
+
+if [[ -z "$can_blacklisted" || "$can_blacklisted" != *"blacklist can"* ]]; then
+    echo "CAN protocol is not blacklisted. This is a finding."
+    sudo bash -c 'echo "blacklist can" >> /etc/modprobe.d/blacklist.conf'
+else
+    echo "CAN protocol is blacklisted, which is compliant."
+fi
+
+
+echo "****************************V-230494*******************************"
+# Verify if ATM protocol is disabled with /bin/false
+atm_disabled=$(sudo grep -r atm /etc/modprobe.d/* | grep "/bin/false")
+
+if [[ -z "$atm_disabled" ]]; then
+    echo "ATM protocol is not disabled with /bin/false. This is a finding."
+    sudo bash -c 'echo "install atm /bin/false" > /etc/modprobe.d/blacklist.conf'
+else
+    echo "ATM protocol is disabled with /bin/false, which is compliant."
+    sudo bash -c 'echo "blacklist atm" >> /etc/modprobe.d/blacklist.conf'
+fi
+
+# Verify if ATM protocol is blacklisted
+atm_blacklisted=$(sudo grep -r atm /etc/modprobe.d/* | grep "blacklist")
+
+if [[ -z "$atm_blacklisted" || "$atm_blacklisted" != *"blacklist atm"* ]]; then
+    echo "ATM protocol is not blacklisted. This is a finding."
+else
+    echo "ATM protocol is blacklisted, which is compliant."
+fi
+# Reboot the system for the settings to take effect
+echo "Reboot the system for the changes to take effect."
+
+
+echo "****************************V-230497*******************************"
+# Verify if TIPC protocol is disabled with /bin/false
+tipc_disabled=$(sudo grep -r tipc /etc/modprobe.d/* | grep "/bin/false")
+
+if [[ -z "$tipc_disabled" ]]; then
+    echo "TIPC protocol is not disabled with /bin/false. This is a finding."
+    sudo bash -c 'echo "install tipc /bin/false" > /etc/modprobe.d/blacklist.conf'
+else
+    echo "TIPC protocol is disabled with /bin/false, which is compliant."
+fi
+
+# Verify if TIPC protocol is blacklisted
+tipc_blacklisted=$(sudo grep -r tipc /etc/modprobe.d/* | grep "blacklist")
+
+if [[ -z "$tipc_blacklisted" || "$tipc_blacklisted" != *"blacklist tipc"* ]]; then
+    echo "TIPC protocol is not blacklisted. This is a finding."
+    sudo bash -c 'echo "blacklist tipc" >> /etc/modprobe.d/blacklist.conf'
+else
+    echo "TIPC protocol is blacklisted, which is compliant."
+fi
+echo "Reboot the system for the changes to take effect."
+
+
+echo "****************************V-230496*******************************"
+# Verify if SCTP protocol is disabled with /bin/false
+sctp_disabled=$(sudo grep -r sctp /etc/modprobe.d/* | grep "/bin/false")
+
+if [[ -z "$sctp_disabled" ]]; then
+    echo "SCTP protocol is not disabled with /bin/false. This is a finding."
+    sudo bash -c 'echo "install sctp /bin/false" > /etc/modprobe.d/blacklist.conf'
+else
+    echo "SCTP protocol is disabled with /bin/false, which is compliant."
+fi
+
+# Verify if SCTP protocol is blacklisted
+sctp_blacklisted=$(sudo grep -r sctp /etc/modprobe.d/* | grep "blacklist")
+
+if [[ -z "$sctp_blacklisted" || "$sctp_blacklisted" != *"blacklist sctp"* ]]; then
+    echo "SCTP protocol is not blacklisted. This is a finding."
+    sudo bash -c 'echo "blacklist sctp" >> /etc/modprobe.d/blacklist.conf'
+else
+    echo "SCTP protocol is blacklisted, which is compliant."
+fi
+
+echo "Reboot the system for the changes to take effect."
+
+
+echo "****************************V-230491*******************************"
+# Verify if kernel page-table isolation (pti) is enabled in grub2 environment
+pti_enabled=$(sudo grub2-editenv list | grep pti | grep "=on")
+
+if [[ -z "$pti_enabled" ]]; then
+    echo "Kernel page-table isolation (pti) is not enabled or missing in grub2 environment. This is a finding."
+    sudo grubby --update-kernel=ALL --args="pti=on"
+else
+    echo "Kernel page-table isolation (pti) is enabled in grub2 environment, which is compliant."
+fi
+
+# Check if pti is set to "on" in /etc/default/grub
+pti_config=$(sudo grep 'pti=on' /etc/default/grub)
+
+if [[ -z "$pti_config" ]]; then
+    echo "Kernel page-table isolation (pti) is not set to 'on' in /etc/default/grub. This is a finding."
+    sudo sed -i 's/GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 pti=on"/' /etc/default/grub
+else
+    echo "Kernel page-table isolation (pti) is set to 'on' in /etc/default/grub, which is compliant."
+fi
+
+# Update grub configuration
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+
+echo "Kernel page-table isolation (pti) is now enabled and configured to persist through kernel updates."
+
+
+echo "****************************V-230270*******************************"
+# Verify if kernel profiling by unprivileged users is prevented
+perf_event_paranoid=$(sudo sysctl kernel.perf_event_paranoid | cut -d'=' -f2 | tr -d ' ')
+
+if [[ "$perf_event_paranoid" != "2" ]]; then
+    echo "Kernel profiling by unprivileged users is not prevented or missing. Current setting: $perf_event_paranoid. This is a finding."
+    sudo bash -c 'echo "kernel.perf_event_paranoid = 2" > /etc/sysctl.d/99-sysctl.conf'
+else
+    echo "Kernel profiling by unprivileged users is prevented with setting: $perf_event_paranoid, which is compliant."
+fi
+
+# Check if kernel.perf_event_paranoid is set to 2 in system configuration files
+conf_files=$(sudo grep -r 'kernel.perf_event_paranoid' /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf | grep '= 2')
+
+if [[ -z "$conf_files" ]]; then
+    echo "Configuration files for kernel.perf_event_paranoid are missing or set differently. This is a finding."
+    sudo rm -f /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf
+else
+    echo "Configuration files for kernel.perf_event_paranoid are set to 2, which is compliant."
+fi
+
+# Load settings from all system configuration files
+sudo sysctl --system
+
+echo "Kernel profiling by unprivileged users is now prevented and configured to persist."
+
+echo "****************************LOW-STIGS-SCRIPT-FINISHED*******************************"
